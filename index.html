@@ -676,7 +676,26 @@ FOLLOW_UP_TRIGGERS={
 "Booked inspection":{task:"Confirm inspection attendance",days:1},
 "Weekly call":{task:"Weekly follow-up call",days:7},
 };
-const STAGES=[
+let MODE='buyer';
+const AGENT_STAGES=[
+{name:"Information",dot:"#B4B2A9",days:30,
+desc:"Early vendor contact — thinking about selling but no clear timeline. Touch base monthly to stay front of mind.",
+goal:"Stay on their radar — call, text or send something relevant",
+actions:["Connected","No answer","Sent market update","Sent text"]},
+{name:"Scenario",dot:"#85B7EB",days:14,
+desc:"Genuine selling intent forming. Check in every 2 weeks — get in the door for an appraisal.",
+goal:"Book the appraisal — get face to face and understand their situation",
+actions:["Connected","No answer","Sent market update","Sent text","Booked appraisal"]},
+{name:"Ready to Sell",dot:"#5DCAA5",days:7,
+desc:"Appraised and preparing to go. Weekly contact. Push toward signing the agency agreement.",
+goal:"Get the listing signed — present your strategy and lock in the campaign",
+actions:["Connected","Appraisal done","Sent proposal","Sent text","No answer"]},
+{name:"Listed",dot:"#EF9F27",days:7,
+desc:"Live campaigns. Weekly vendor updates minimum — every contact builds trust through the sale.",
+goal:"Drive the campaign — buyer feedback, offers, and vendor comms every week",
+actions:["Vendor update","Open home","Offer received","Sent text","No answer"]},
+];
+let STAGES=[
 {name:"Information",dot:"#B4B2A9",days:30,
 desc:"Early enquiry — brief is light or not yet met. Touch base once a month to stay on their radar.",
 goal:"Stay on their radar — call, text or send something relevant",
@@ -814,12 +833,113 @@ async function handleLogin(){
     btn.textContent='Sign in';
   }
 }
+
+// ── Sign up ──────────────────────────────────────────────────────────────────
+var INVITE_CODES = ['BRIEFED2026','AGENT2026'];
+var INVITE_MODES = {'BRIEFED2026':'buyer','AGENT2026':'agent'};
+
+function showSignup(){
+  document.getElementById('signin-form').style.display='none';
+  document.getElementById('signup-form').style.display='block';
+  document.getElementById('auth-subtitle').textContent='Create your account';
+}
+function showSignin(){
+  document.getElementById('signup-form').style.display='none';
+  document.getElementById('signin-form').style.display='block';
+  document.getElementById('auth-subtitle').textContent='Sign in to continue';
+}
+
+async function handleSignup(){
+  var btn = document.getElementById('signup-btn');
+  var invite = document.getElementById('signup-invite').value.trim().toUpperCase();
+  var email = document.getElementById('signup-email').value.trim();
+  var password = document.getElementById('signup-password').value;
+  var errEl = document.getElementById('signup-error');
+  errEl.textContent='';
+
+  if(INVITE_CODES.indexOf(invite) < 0){
+    errEl.textContent='Invalid invite code.';
+    return;
+  }
+  if(!email || email.indexOf('@') < 0){
+    errEl.textContent='Enter a valid email address.';
+    return;
+  }
+  if(!password || password.length < 8){
+    errEl.textContent='Password must be at least 8 characters.';
+    return;
+  }
+
+  btn.disabled=true;
+  btn.textContent='Creating account...';
+  try{
+    var r = await fetch(SUPA_URL+'/auth/v1/signup', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY},
+      body:JSON.stringify({email:email, password:password})
+    });
+    var data = await r.json();
+    if(!r.ok) throw new Error(data.error_description || data.msg || 'Sign up failed.');
+
+    try{sessionStorage.setItem('sb_mode', INVITE_MODES[invite]||'buyer');}catch(e){}
+    if(data.access_token){
+      // Signed up and logged in immediately (email confirmation off)
+      _authToken = data.access_token;
+      _currentUserId = data.user && data.user.id ? data.user.id : null;
+      try{
+        sessionStorage.setItem('sb_token', _authToken);
+        if(data.refresh_token) sessionStorage.setItem('sb_refresh', data.refresh_token);
+        if(_currentUserId) sessionStorage.setItem('sb_uid', _currentUserId);
+      }catch(e){}
+      scheduleTokenRefresh();
+      hideLoginScreen();
+      await load();
+    } else {
+      // Email confirmation required
+      errEl.style.color='#27ae60';
+      errEl.textContent='Account created! Check your email to confirm, then sign in.';
+      btn.textContent='Create account';
+      btn.disabled=false;
+      setTimeout(function(){showSignin();errEl.style.color='#f44336';errEl.textContent='';}, 4000);
+    }
+  }catch(err){
+    errEl.textContent = err.message || 'Sign up failed.';
+    btn.disabled=false;
+    btn.textContent='Create account';
+  }
+}
 async function sbGet(table,select){
   var uid=_currentUserId;
-  var url=SUPA_URL+'/rest/v1/'+table+'?select='+(select||'*')+(uid&&table!=='app_state'?'&user_id=eq.'+uid:'');
+  var url=SUPA_URL+'/rest/v1/'+table+'?select='+(select||'*')+(uid?'&user_id=eq.'+uid:'');
   var r=await fetch(url,{headers:sbHeaders()});
   if(!r.ok)throw new Error('sbGet '+table+' '+r.status);
   return r.json();
+}
+
+const BUYER_STAGES = STAGES;
+const MODE_KPIS = {
+  buyer: {connects:'Connects', briefs:'Briefs', inspections:'Inspections', offers:'Offers'},
+  agent: {connects:'Connects', briefs:'Appraisals', inspections:'Listed', offers:'Offers'}
+};
+function kpiLabel(key){ return (MODE_KPIS[MODE]||MODE_KPIS.buyer)[key] || key; }
+function applyMode(){
+  if(MODE==='agent'){
+    STAGES = AGENT_STAGES;
+    var b;
+    b=document.getElementById('btn-bought'); if(b) b.textContent='Sold';
+    var nb=document.querySelector('.topbar-btn.primary'); if(nb) nb.textContent='+ New vendor';
+    document.title='Briefed';
+  } else {
+    STAGES = BUYER_STAGES;
+  }
+}
+
+// Stable per-user integer id for single-row tables (app_state, focus_data)
+function userRowId(){
+  if(!_currentUserId) return 1;
+  var h=0, s=_currentUserId;
+  for(var i=0;i<s.length;i++){h=((h<<5)-h+s.charCodeAt(i))|0;}
+  return Math.abs(h)||1;
 }
 async function sbUpsert(table,rows){
   if(!rows||!rows.length)return;
@@ -850,34 +970,7 @@ async function load(){
   document.body.insertAdjacentHTML('beforeend','<div id="sb-loading" style="position:fixed;inset:0;background:rgba(13,27,46,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;color:#fff;font-family:DM Sans,sans-serif"><div style="font-size:22px;font-weight:700;letter-spacing:-.03em;margin-bottom:8px">Buyer Pipeline</div><div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:24px">Loading your pipeline...</div><div style="width:48px;height:48px;border:3px solid rgba(255,255,255,.2);border-top-color:#7FB3E8;border-radius:50%;animation:spin .8s linear infinite"></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>');
 
   try {
-    // Check if DB has data
-    var buyerRows = await sbGet('buyers','id');
-    var isEmpty = !buyerRows || buyerRows.length === 0;
-
-    if(isEmpty){
-      // First run — migrate PRELOADED data to Supabase
-      console.log('First run: migrating data to Supabase...');
-      document.querySelector('#sb-loading div:nth-child(2)').textContent='First time setup — uploading your data...';
-
-      // Upload in chunks to avoid request size limits
-      var CHUNK=30;
-      async function uploadChunks(table, rows){
-        for(var i=0;i<rows.length;i+=CHUNK){
-          await sbUpsert(table, rows.slice(i,i+CHUNK));
-        }
-      }
-
-      await uploadChunks('buyers', PRELOADED.buyers.map(buyerToRow));
-      await uploadChunks('bought', PRELOADED.bought.map(boughtToRow));
-      await uploadChunks('inactive', PRELOADED.inactive.map(inactiveToRow));
-      await uploadChunks('properties', PRELOADED.properties.map(propToRow));
-      await uploadChunks('developments', PRELOADED.developments.map(devToRow));
-
-      // Save app state
-      await sbUpsert('app_state', [{id:1, next_id:PRELOADED.nextId||370, active_stage:0, view:'dash', prop_tab:'properties', expanded:{}, exp_bought:{}, exp_inactive:{}, exp_dash:{}, exp_prop:{}, exp_dev:{}, updated_at:Date.now()}]);
-
-      console.log('Migration complete!');
-    }
+    // Migration removed: data lives in Supabase, new users start empty
 
     // Now load everything from Supabase
     document.querySelector('#sb-loading div:nth-child(2)').textContent='Loading your pipeline...';
@@ -887,12 +980,15 @@ async function load(){
       sbGet('inactive','*'),
       sbGet('properties','*'),
       sbGet('developments','*'),
-      sbGet('app_state','*'),
-      sbGet('focus_data','*')
+      sbGet('app_state','*&order=updated_at.desc'),
+      sbGet('focus_data','*&order=updated_at.desc')
     ]);
 
     var as = asRows && asRows[0] ? asRows[0] : {};
     var fd = fdRows && fdRows[0] ? fdRows[0] : null;
+    var pendingMode = null;
+    try{pendingMode = sessionStorage.getItem('sb_mode');}catch(e){}
+    MODE = as.mode || pendingMode || 'buyer';
 
     state = {
       buyers:     (bRows  ||[]).map(rowToBuyer),
@@ -900,7 +996,7 @@ async function load(){
       inactive:   (inRows ||[]).map(rowToInactive),
       properties: (prRows ||[]).map(rowToProp),
       developments:(dvRows||[]).map(rowToDev),
-      nextId:     as.next_id    || PRELOADED.nextId || 370,
+      nextId:     as.next_id    || 1,
       activeStage:as.active_stage || 0,
       view:       as.view       || 'dash',
       propTab:    as.prop_tab   || 'properties',
@@ -942,6 +1038,7 @@ async function load(){
     state.focusData={tab:'week',motto:'Keep doing the basics and build',wKpis:{connects:0,briefs:0,inspections:0,offers:0},wGoals:{connects:150,briefs:10,inspections:10,offers:3},yKpis:{connects:730,briefs:55,inspections:70,offers:5,sales:4},deals:[],priorities:[]};
   }
 
+  applyMode();
   switchView(state.view||'dash');
   checkAutoWeekRollup();
 }
@@ -1003,8 +1100,8 @@ async function _doSave(){
       upsertChunks('inactive',    (state.inactive    ||[]).map(inactiveToRow)),
       upsertChunks('properties',  (state.properties  ||[]).map(propToRow)),
       upsertChunks('developments',(state.developments||[]).map(devToRow)),
-      sbUpsert('app_state',[{id:1,next_id:state.nextId||1,active_stage:state.activeStage||0,view:state.view||'dash',prop_tab:state.propTab||'properties',expanded:state.expanded||{},exp_bought:state.expBought||{},exp_inactive:state.expInactive||{},exp_dash:state.expDash||{},exp_prop:state.expProp||{},exp_dev:state.expDev||{},updated_at:Date.now()}]),
-      sbUpsert('focus_data',[{id:1,tab:fd.tab||'week',motto:fd.motto||'',w_kpis:fd.wKpis||{},w_goals:fd.wGoals||{},y_kpis:fd.yKpis||{},deals:fd.deals||[],priorities:fd.priorities||[],updated_at:Date.now(),user_id:_currentUserId}]),
+      sbUpsert('app_state',[{id:userRowId(),next_id:state.nextId||1,active_stage:state.activeStage||0,view:state.view||'dash',prop_tab:state.propTab||'properties',expanded:state.expanded||{},exp_bought:state.expBought||{},exp_inactive:state.expInactive||{},exp_dash:state.expDash||{},exp_prop:state.expProp||{},exp_dev:state.expDev||{},updated_at:Date.now(),user_id:_currentUserId,mode:MODE}]),
+      sbUpsert('focus_data',[{id:userRowId(),tab:fd.tab||'week',motto:fd.motto||'',w_kpis:fd.wKpis||{},w_goals:fd.wGoals||{},y_kpis:fd.yKpis||{},deals:fd.deals||[],priorities:fd.priorities||[],updated_at:Date.now(),user_id:_currentUserId}]),
     ]);
 
   }catch(err){
@@ -1759,10 +1856,10 @@ if(tab==="week"){
   // Weekly KPIs
   h+='<div style="font-size:10px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">\uD83D\uDCCA Weekly KPIs</div>';
   h+='<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px">';
-  h+=kpiBox("Connects","connects",wKpis.connects||0,wGoals.connects,false);
-  h+=kpiBox("Briefs","briefs",wKpis.briefs||0,wGoals.briefs,false);
-  h+=kpiBox("Inspections","inspections",wKpis.inspections||0,wGoals.inspections,false);
-  h+=kpiBox("Offers","offers",wKpis.offers||0,wGoals.offers,false);
+  h+=kpiBox(kpiLabel("connects"),"connects",wKpis.connects||0,wGoals.connects,false);
+  h+=kpiBox(kpiLabel("briefs"),"briefs",wKpis.briefs||0,wGoals.briefs,false);
+  h+=kpiBox(kpiLabel("inspections"),"inspections",wKpis.inspections||0,wGoals.inspections,false);
+  h+=kpiBox(kpiLabel("offers"),"offers",wKpis.offers||0,wGoals.offers,false);
   h+='</div>';
 
   // Deals in play
@@ -1856,10 +1953,10 @@ if(tab==="week"){
   // Yearly KPIs
   h+='<div style="font-size:10px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">\uD83D\uDCCA Annual KPI Tracker</div>';
   h+='<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px">';
-  h+=kpiBox("Connects","connects",yKpis.connects||0,yGoals.connects,true);
-  h+=kpiBox("Briefs","briefs",yKpis.briefs||0,yGoals.briefs,true);
-  h+=kpiBox("Inspections","inspections",yKpis.inspections||0,yGoals.inspections,true);
-  h+=kpiBox("Offers","offers",yKpis.offers||0,yGoals.offers,true);
+  h+=kpiBox(kpiLabel("connects"),"connects",yKpis.connects||0,yGoals.connects,true);
+  h+=kpiBox(kpiLabel("briefs"),"briefs",yKpis.briefs||0,yGoals.briefs,true);
+  h+=kpiBox(kpiLabel("inspections"),"inspections",yKpis.inspections||0,yGoals.inspections,true);
+  h+=kpiBox(kpiLabel("offers"),"offers",yKpis.offers||0,yGoals.offers,true);
   h+='</div>';
 
   // Why
@@ -4394,15 +4491,30 @@ async function sendClaudeMessage(){
 </script>
 
 
-<!-- Login Screen -->
-<div id="login-screen" style="display:none;position:fixed;inset:0;background:#0D1B2E;z-index:99999;align-items:center;justify-content:center;font-family:'DM Sans',sans-serif">
+<!-- Auth Screen -->
+<div id="login-screen" style="display:flex;position:fixed;inset:0;background:#0D1B2E;z-index:99999;align-items:center;justify-content:center;font-family:'DM Sans',sans-serif">
   <div style="background:#1a2a3a;border-radius:16px;padding:40px;width:90%;max-width:400px;text-align:center">
-    <div style="font-size:24px;font-weight:700;letter-spacing:-.03em;color:#fff;margin-bottom:6px">Biller Pipeline</div>
-    <div style="font-size:13px;color:rgba(255,255,255,.4);margin-bottom:32px">Sign in to continue</div>
-    <input id="login-email" type="email" placeholder="Email" autocomplete="email" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box" />
-    <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:8px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')handleLogin()" />
-    <div id="login-error" style="color:#f44336;font-size:12px;margin-bottom:16px;min-height:16px"></div>
-    <button id="login-btn" onclick="handleLogin()" style="width:100%;padding:14px;border-radius:10px;background:#7FB3E8;color:#0D1B2E;font-size:15px;font-weight:700;border:none;cursor:pointer">Sign in</button>
+    <div style="font-size:26px;font-weight:700;letter-spacing:-.03em;color:#fff;margin-bottom:4px">Briefed</div>
+    <div id="auth-subtitle" style="font-size:13px;color:rgba(255,255,255,.4);margin-bottom:28px">Sign in to continue</div>
+
+    <!-- Sign in form -->
+    <div id="signin-form">
+      <input id="login-email" type="email" placeholder="Email" autocomplete="email" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box" />
+      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:8px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')handleLogin()" />
+      <div id="login-error" style="color:#f44336;font-size:12px;margin-bottom:16px;min-height:16px"></div>
+      <button id="login-btn" onclick="handleLogin()" style="width:100%;padding:14px;border-radius:10px;background:#7FB3E8;color:#0D1B2E;font-size:15px;font-weight:700;border:none;cursor:pointer">Sign in</button>
+      <div style="margin-top:18px;font-size:12px;color:rgba(255,255,255,.4)">Have an invite code? <a href="#" onclick="showSignup();return false" style="color:#7FB3E8;text-decoration:none;font-weight:600">Create account</a></div>
+    </div>
+
+    <!-- Sign up form -->
+    <div id="signup-form" style="display:none">
+      <input id="signup-invite" type="text" placeholder="Invite code" autocomplete="off" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box;text-transform:uppercase" />
+      <input id="signup-email" type="email" placeholder="Email" autocomplete="email" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box" />
+      <input id="signup-password" type="password" placeholder="Password (min 8 characters)" autocomplete="new-password" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:14px;margin-bottom:8px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')handleSignup()" />
+      <div id="signup-error" style="color:#f44336;font-size:12px;margin-bottom:16px;min-height:16px"></div>
+      <button id="signup-btn" onclick="handleSignup()" style="width:100%;padding:14px;border-radius:10px;background:#7FB3E8;color:#0D1B2E;font-size:15px;font-weight:700;border:none;cursor:pointer">Create account</button>
+      <div style="margin-top:18px;font-size:12px;color:rgba(255,255,255,.4)">Already have an account? <a href="#" onclick="showSignin();return false" style="color:#7FB3E8;text-decoration:none;font-weight:600">Sign in</a></div>
+    </div>
   </div>
 </div>
 </div>
