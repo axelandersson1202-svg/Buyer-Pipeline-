@@ -1033,7 +1033,7 @@ async function load(){
 
   // Load focusData from Supabase (or use defaults)
   if(fd){
-    state.focusData={tab:fd.tab||'week',motto:fd.motto||'Keep doing the basics and build',wKpis:fd.w_kpis||{connects:0,briefs:0,inspections:0,offers:0},wGoals:fd.w_goals||{connects:150,briefs:10,inspections:10,offers:3},yKpis:fd.y_kpis||{connects:730,briefs:55,inspections:70,offers:5,sales:4},deals:fd.deals||[],priorities:fd.priorities||[]};
+    state.focusData={tab:fd.tab||'week',motto:fd.motto||'Keep doing the basics and build',wKpis:fd.w_kpis||{connects:0,briefs:0,inspections:0,offers:0},wGoals:fd.w_goals||{connects:150,briefs:10,inspections:10,offers:3},yKpis:fd.y_kpis||{connects:730,briefs:55,inspections:70,offers:5,sales:4},deals:fd.deals||[],priorities:fd.priorities||[],lastWeekRollup:fd.last_week_rollup||0};
   }else{
     state.focusData={tab:'week',motto:'Keep doing the basics and build',wKpis:{connects:0,briefs:0,inspections:0,offers:0},wGoals:{connects:150,briefs:10,inspections:10,offers:3},yKpis:{connects:730,briefs:55,inspections:70,offers:5,sales:4},deals:[],priorities:[]};
   }
@@ -1101,7 +1101,7 @@ async function _doSave(){
       upsertChunks('properties',  (state.properties  ||[]).map(propToRow)),
       upsertChunks('developments',(state.developments||[]).map(devToRow)),
       sbUpsert('app_state',[{id:userRowId(),next_id:state.nextId||1,active_stage:state.activeStage||0,view:state.view||'dash',prop_tab:state.propTab||'properties',expanded:state.expanded||{},exp_bought:state.expBought||{},exp_inactive:state.expInactive||{},exp_dash:state.expDash||{},exp_prop:state.expProp||{},exp_dev:state.expDev||{},updated_at:Date.now(),user_id:_currentUserId,mode:MODE}]),
-      sbUpsert('focus_data',[{id:userRowId(),tab:fd.tab||'week',motto:fd.motto||'',w_kpis:fd.wKpis||{},w_goals:fd.wGoals||{},y_kpis:fd.yKpis||{},deals:fd.deals||[],priorities:fd.priorities||[],updated_at:Date.now(),user_id:_currentUserId}]),
+      sbUpsert('focus_data',[{id:userRowId(),tab:fd.tab||'week',motto:fd.motto||'',w_kpis:fd.wKpis||{},w_goals:fd.wGoals||{},y_kpis:fd.yKpis||{},deals:fd.deals||[],priorities:fd.priorities||[],last_week_rollup:fd.lastWeekRollup||0,updated_at:Date.now(),user_id:_currentUserId}]),
     ]);
 
   }catch(err){
@@ -2244,7 +2244,6 @@ function resetFocusWeek(){
   state.focusData.wKpis={connects:0,briefs:0,inspections:0,offers:0};
   state.focusData.lastWeekRollup=Date.now();
   if(state.focusData.priorities)state.focusData.priorities.forEach(function(p){p.done=false;});
-  fd.lastWeekRollup=Date.now();
   save();
   // Show confirmation
   var msg="Week rolled up! Added: "+(w.connects||0)+" connects, "+(w.briefs||0)+" briefs, "+(w.inspections||0)+" inspections, "+(w.offers||0)+" offers.";
@@ -4262,7 +4261,10 @@ function checkAutoWeekRollup(){
       y.offers=(y.offers||0)+(w.offers||0);
       fd.wKpis={connects:0,briefs:0,inspections:0,offers:0};
       if(fd.priorities)fd.priorities.forEach(function(p){p.done=false;});
-      if(typeof generateWeeklyMotto==='function')fd.motto=generateWeeklyMotto(fd);
+      if(typeof generateWeeklyMotto==='function'){
+        var _mottoResult=generateWeeklyMotto(fd);
+        fd.motto=(_mottoResult&&_mottoResult.motto)?_mottoResult.motto:fd.motto;
+      }
     }
     fd.lastWeekRollup=lastSundayTs;
     save();
