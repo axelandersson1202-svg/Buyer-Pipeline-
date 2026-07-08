@@ -676,25 +676,6 @@ FOLLOW_UP_TRIGGERS={
 "Booked inspection":{task:"Confirm inspection attendance",days:1},
 "Weekly call":{task:"Weekly follow-up call",days:7},
 };
-let MODE='buyer';
-const AGENT_STAGES=[
-{name:"Information",dot:"#B4B2A9",days:30,
-desc:"Early vendor contact — thinking about selling but no clear timeline. Touch base monthly to stay front of mind.",
-goal:"Stay on their radar — call, text or send something relevant",
-actions:["Connected","No answer","Sent market update","Sent text"]},
-{name:"Scenario",dot:"#85B7EB",days:14,
-desc:"Genuine selling intent forming. Check in every 2 weeks — get in the door for an appraisal.",
-goal:"Book the appraisal — get face to face and understand their situation",
-actions:["Connected","No answer","Sent market update","Sent text","Booked appraisal"]},
-{name:"Ready to Sell",dot:"#5DCAA5",days:7,
-desc:"Appraised and preparing to go. Weekly contact. Push toward signing the agency agreement.",
-goal:"Get the listing signed — present your strategy and lock in the campaign",
-actions:["Connected","Appraisal done","Sent proposal","Sent text","No answer"]},
-{name:"Listed",dot:"#EF9F27",days:7,
-desc:"Live campaigns. Weekly vendor updates minimum — every contact builds trust through the sale.",
-goal:"Drive the campaign — buyer feedback, offers, and vendor comms every week",
-actions:["Vendor update","Open home","Offer received","Sent text","No answer"]},
-];
 let STAGES=[
 {name:"Information",dot:"#B4B2A9",days:30,
 desc:"Early enquiry — brief is light or not yet met. Touch base once a month to stay on their radar.",
@@ -835,8 +816,7 @@ async function handleLogin(){
 }
 
 // ── Sign up ──────────────────────────────────────────────────────────────────
-var INVITE_CODES = ['BRIEFED2026','AGENT2026'];
-var INVITE_MODES = {'BRIEFED2026':'buyer','AGENT2026':'agent'};
+var INVITE_CODES = ['BRIEFED2026'];
 
 function showSignup(){
   document.getElementById('signin-form').style.display='none';
@@ -881,7 +861,6 @@ async function handleSignup(){
     var data = await r.json();
     if(!r.ok) throw new Error(data.error_description || data.msg || 'Sign up failed.');
 
-    try{sessionStorage.setItem('sb_mode', INVITE_MODES[invite]||'buyer');}catch(e){}
     if(data.access_token){
       // Signed up and logged in immediately (email confirmation off)
       _authToken = data.access_token;
@@ -916,23 +895,8 @@ async function sbGet(table,select){
   return r.json();
 }
 
-const BUYER_STAGES = STAGES;
-const MODE_KPIS = {
-  buyer: {connects:'Connects', briefs:'Briefs', inspections:'Inspections', offers:'Offers'},
-  agent: {connects:'Connects', briefs:'Appraisals', inspections:'Listed', offers:'Offers'}
-};
-function kpiLabel(key){ return (MODE_KPIS[MODE]||MODE_KPIS.buyer)[key] || key; }
-function applyMode(){
-  if(MODE==='agent'){
-    STAGES = AGENT_STAGES;
-    var b;
-    b=document.getElementById('btn-bought'); if(b) b.textContent='Sold';
-    var nb=document.querySelector('.topbar-btn.primary'); if(nb) nb.textContent='+ New vendor';
-    document.title='Briefed';
-  } else {
-    STAGES = BUYER_STAGES;
-  }
-}
+const KPI_LABELS = {connects:'Connects', briefs:'Briefs', inspections:'Inspections', offers:'Offers'};
+function kpiLabel(key){ return KPI_LABELS[key] || key; }
 
 // Stable per-user integer id for single-row tables (app_state, focus_data)
 function userRowId(){
@@ -986,9 +950,6 @@ async function load(){
 
     var as = asRows && asRows[0] ? asRows[0] : {};
     var fd = fdRows && fdRows[0] ? fdRows[0] : null;
-    var pendingMode = null;
-    try{pendingMode = sessionStorage.getItem('sb_mode');}catch(e){}
-    MODE = as.mode || pendingMode || 'buyer';
 
     state = {
       buyers:     (bRows  ||[]).map(rowToBuyer),
@@ -1038,7 +999,6 @@ async function load(){
     state.focusData={tab:'week',motto:'Keep doing the basics and build',wKpis:{connects:0,briefs:0,inspections:0,offers:0},wGoals:{connects:150,briefs:10,inspections:10,offers:3},yKpis:{connects:730,briefs:55,inspections:70,offers:5,sales:4},deals:[],priorities:[]};
   }
 
-  applyMode();
   switchView(state.view||'dash');
   checkAutoWeekRollup();
 }
@@ -1046,13 +1006,16 @@ async function load(){
 // ── Debounced save ───────────────────────────────────────────────────────────
 var _saveTimer=null;
 var _saving=false;
+var _savePending=false;
 function save(){
   // Debounce the Supabase save by 800ms
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(function(){_doSave();},800);
 }
 async function _doSave(){
-  if(_saving)return;
+  // If a save is already in flight, don't drop this edit — flag it so the
+  // in-flight save re-runs once it finishes and picks up the latest state.
+  if(_saving){_savePending=true;return;}
   _saving=true;
   try{
     var CHUNK=30;
@@ -1100,28 +1063,30 @@ async function _doSave(){
       upsertChunks('inactive',    (state.inactive    ||[]).map(inactiveToRow)),
       upsertChunks('properties',  (state.properties  ||[]).map(propToRow)),
       upsertChunks('developments',(state.developments||[]).map(devToRow)),
-      sbUpsert('app_state',[{id:userRowId(),next_id:state.nextId||1,active_stage:state.activeStage||0,view:state.view||'dash',prop_tab:state.propTab||'properties',expanded:state.expanded||{},exp_bought:state.expBought||{},exp_inactive:state.expInactive||{},exp_dash:state.expDash||{},exp_prop:state.expProp||{},exp_dev:state.expDev||{},updated_at:Date.now(),user_id:_currentUserId,mode:MODE}]),
+      sbUpsert('app_state',[{id:userRowId(),next_id:state.nextId||1,active_stage:state.activeStage||0,view:state.view||'dash',prop_tab:state.propTab||'properties',expanded:state.expanded||{},exp_bought:state.expBought||{},exp_inactive:state.expInactive||{},exp_dash:state.expDash||{},exp_prop:state.expProp||{},exp_dev:state.expDev||{},updated_at:Date.now(),user_id:_currentUserId}]),
       sbUpsert('focus_data',[{id:userRowId(),tab:fd.tab||'week',motto:fd.motto||'',w_kpis:fd.wKpis||{},w_goals:fd.wGoals||{},y_kpis:fd.yKpis||{},deals:fd.deals||[],priorities:fd.priorities||[],last_week_rollup:fd.lastWeekRollup||0,updated_at:Date.now(),user_id:_currentUserId}]),
     ]);
 
+    _saving=false;
+    if(_savePending){_savePending=false;await _doSave();}
+    return;
   }catch(err){
     console.error('Supabase save error:',err);
     // If JWT expired, try to refresh and retry once
     if(err.message && err.message.indexOf('401') >= 0){
       var refreshed = await refreshToken();
+      _saving=false;
       if(refreshed){
-        _saving=false;
         await _doSave();
-        return;
       } else {
         // Token can't be refreshed - force re-login
         alert('Your session has expired. Please log in again.');
         signOut();
       }
+      return;
     }
-  }finally{
-    // Fix: always release the lock even on error
     _saving=false;
+    if(_savePending){_savePending=false;await _doSave();}
   }
 }
 function lc(b){return b.log&&b.log.length?b.log[0].date:b.createdAt||Date.now();}
@@ -2286,7 +2251,7 @@ const sa=sellBadge(a);const sb=sellBadge(b);
 const order={"sell-badge-now":0,"sell-badge-soon":1,"sell-badge-ok":2};
 return (order[sa.cls]??2)-(order[sb.cls]??2);
 });
-let html=`<div class="page-header"><h2>Bought</h2><p>${state.bought.length} past buyer${state.bought.length!==1?"s":""}. Sell follow-ups appear when they hit 6 months.</p></div>`;
+let html=`<div class="page-header"><h2>Bought</h2><p>${list.length} past buyer${list.length!==1?"s":""}. Sell follow-ups appear when they hit 6 months.</p></div>`;
 if(!list.length){html+=`<div class="empty">No buyers marked as bought yet.</div>`;document.getElementById("main").innerHTML=html;return;}
 html+=`<div class="cards">`;
 list.forEach(b=>{
