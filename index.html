@@ -405,7 +405,7 @@ a{color:inherit;text-decoration:none}
 <div class="app-shell">
 <!-- Top bar -->
 <div class="topbar">
-  <div class="topbar-brand">Biller<span class="brand-pipeline"> Pipeline</span></div>
+  <div class="topbar-brand">Briefed</div>
   <div class="topbar-date" id="hdate"></div>
   <div class="topbar-spacer"></div>
   <div class="topbar-actions">
@@ -3131,9 +3131,9 @@ var propPrice=(function(){
   var raw=(prop.price||"").replace(/,/g,"");
   // range: "$7-7.5M" or "$5.5-6M"
   var rm=raw.match(/\$?([\d.]+)M?\s*[-\u2013]\s*\$?([\d.]+)M?/);
-  if(rm)return parseFloat(rm[1]);
-  var sm=raw.match(/\$?([\d.]+)M?/);
-  return sm?parseFloat(sm[1]):0;
+  var v=rm?parseFloat(rm[1]):(function(){var sm=raw.match(/\$?([\d.]+)M?/);return sm?parseFloat(sm[1]):0;})();
+  if(v>1000)v=v/1e6; // normalize full dollar figures (e.g. "$4,750,000", common on project/unit prices) to millions
+  return v;
 })();
 
 // ── Build buyer budget from all possible sources ──
@@ -3640,6 +3640,10 @@ save();render();
 function dismissNewBuyer(id){
   var b=state.buyers.find(function(x){return x.id===id;});
   if(!b)return;
+  if(!b.log||!b.log.length){
+    showSettingsToast("Log an action for "+b.name+" first — then dismiss");
+    return;
+  }
   b.newBuyerDismissed=true;
   save();
   render();
@@ -3888,6 +3892,7 @@ function restoreBuyerProp(buyerId,propId){
   save();
   afterCardAction(buyerId);
 }
+function _idLit(v){return "'"+String(v).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+"'";}
 function buildMatchedProps(b){
 var passed=b.passedProps||[];
 var sl={"on-market":"On-market","off-market":"Off-market","upcoming":"Upcoming","pocket":"Pocket","under-offer":"Under offer","sold":"Sold"};
@@ -3939,16 +3944,16 @@ out+=all.map(function(x){
   var statusLabel=isUnit?"Off-plan":(sl[p.status]||p.status||"");
   var statusCls=isUnit?"status-upcoming":(sc[p.status]||"");
   var onclickOpen=isUnit
-    ?"event.stopPropagation();openDevUnitCard("+JSON.stringify(x.dev.id)+","+JSON.stringify(x.unit.id)+")"
-    :"event.stopPropagation();showPropBuyerMatches("+p.id+")";
+    ?"event.stopPropagation();openDevUnitCard("+x.dev.id+","+_idLit(x.unit.id)+")"
+    :"event.stopPropagation();goToPropCard("+p.id+")";
   var copyBtn=isUnit
-    ?"<button onclick=\"event.stopPropagation();copyUnitDetails("+JSON.stringify(x.dev.id)+","+JSON.stringify(x.unit.id)+")\" style=\"padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--bg);font-size:11px;cursor:pointer;color:var(--muted);flex-shrink:0\" title=\"Copy details\">⎘</button>"
+    ?"<button onclick=\"event.stopPropagation();copyUnitDetails("+x.dev.id+","+_idLit(x.unit.id)+")\" style=\"padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--bg);font-size:11px;cursor:pointer;color:var(--muted);flex-shrink:0\" title=\"Copy details\">⎘</button>"
     :"<button onclick=\"event.stopPropagation();copyPropertyDetails("+p.id+")\" style=\"padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--bg);font-size:11px;cursor:pointer;color:var(--muted);flex-shrink:0\" title=\"Copy details\">⎘</button>";
-  var dismissId=isUnit?JSON.stringify("u-"+x.dev.id+"-"+x.unit.id):p.id;
+  var dismissId=isUnit?_idLit("u-"+x.dev.id+"-"+x.unit.id):p.id;
   return "<div style=\"background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:5px;display:flex;align-items:center;gap:8px;cursor:pointer\" onclick=\""+onclickOpen+"\">"
     +"<div style=\"flex:1;min-width:0\">"
     +"<div style=\"font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">"+label+"</div>"
-    +"<div style=\"font-size:11px;color:var(--muted)\">"+[specs,p.price].filter(Boolean).join(" · ")+"</div></div>"
+    +"<div style=\"font-size:11px;color:var(--muted)\">"+[specs,(p.price||"").toString().trim()].filter(Boolean).join(" · ")+"</div></div>"
     +"<span class=\"status-badge "+statusCls+"\">"+statusLabel+"</span>"
     +copyBtn
     +"<button onclick=\"event.stopPropagation();dismissBuyerProp("+b.id+","+dismissId+")\" style=\"padding:3px 7px;border-radius:5px;border:1px solid #e74c3c;background:var(--bg);font-size:11px;cursor:pointer;color:#e74c3c;flex-shrink:0\">✕</button>"
@@ -4071,7 +4076,7 @@ function openPropertyProfile(id){
   body+='<div style="margin-bottom:14px;display:flex;gap:8px"><button class="lc-btn" onclick="copyPropertyDetails('+p.id+')">⎘ Copy details</button><button class="lc-btn lc-remove" onclick="removeProperty('+p.id+')">✕ Remove</button></div>';
   body+='<div class="slabel">Status</div>';
   body+='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'+statusBtns+'</div>';
-  body+='<div class="slabel">Matched buyers <span style="font-weight:400;color:var(--faint)">(ranked by fit)</span></div>';
+  body+='<div class="slabel" style="display:flex;align-items:center;gap:8px">Matched buyers <span style="font-weight:400;color:var(--faint);flex:1">(ranked by fit)</span><button onclick="showPropBuyerMatches('+p.id+')" style="padding:3px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg);font-size:11px;cursor:pointer;color:var(--muted);flex-shrink:0">Manage matches</button></div>';
   body+='<div style="margin-bottom:10px">'+matchHtml+'</div>';
   body+='</div>';
 
